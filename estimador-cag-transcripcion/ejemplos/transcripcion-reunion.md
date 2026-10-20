@@ -1,0 +1,3 @@
+# Reunión con cliente: App móvil de reservas de restaurantes
+
+The client wants to build a mobile app for managing restaurant reservations. They need user registration, a restaurant search with filters by cuisine and location, a real-time reservation system with availability checking, push notifications for reservation confirmations and reminders, and an admin panel for restaurant owners to manage their listings and view analytics.

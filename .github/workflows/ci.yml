@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: estimador-cag
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.11
+      - run: uv sync --all-groups
+      - run: uv run pytest -v
+      - name: Smoke test (arranca el servidor)
+        run: |
+          uv run uvicorn app.main:app --port 8000 &
+          sleep 5
+          curl --fail http://localhost:8000/health
