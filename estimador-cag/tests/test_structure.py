@@ -8,6 +8,7 @@ REQUIRED = [
     "app/services/__init__.py", "app/services/llm_service.py",
     "app/context/__init__.py", "app/context/examples.py",
     ".env.example", ".gitignore", "pyproject.toml", "README.md",
+    "streamlit_app.py",
 ]
 
 

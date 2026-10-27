@@ -21,3 +21,9 @@ O En Powershell:
 ## Tests
 uv run pytest -v
 
+## Interfaz de chat (Streamlit)
+uv run streamlit run streamlit_app.py
+
+Abre http://localhost:8501, pega la transcripción de la reunión y la estimación se muestra en streaming.
+El panel lateral muestra el system prompt, el contexto CAG y las métricas de la última llamada.
+

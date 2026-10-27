@@ -23,7 +23,7 @@ def build_system_prompt() -> str:
 async def generate_estimation(transcription: str) -> dict:
     client = AsyncOpenAI(api_key=settings.openai_api_key)
     response = await client.chat.completions.create(
-        model=settings.openai_model,
+        model=settings.llm_model,
         messages=[
             {"role": "system", "content": build_system_prompt()},
             {"role": "user", "content": transcription},
