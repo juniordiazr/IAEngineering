@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     app_env: str = "development"
     log_level: str = "DEBUG"
+    estimator_api_base_url: str = "http://localhost:8000"
 
 
 settings = Settings()

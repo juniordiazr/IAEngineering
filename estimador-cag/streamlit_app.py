@@ -1,112 +1,103 @@
-import time
-
+import httpx
 import streamlit as st
-from openai import OpenAI
+from pydantic import ValidationError
 
 from app.config import settings
-from app.context.examples import ESTIMATION_EXAMPLES
-from app.services.llm_service import build_system_prompt
+from app.schemas import (
+    DetailLevel,
+    EstimationRequest,
+    EstimationResponse,
+    OutputFormat,
+    ProjectType,
+)
 
-st.set_page_config(page_title="Estimador CAG", page_icon="🧮", layout="wide")
-st.title("🧮 Estimador de software (CAG)")
-st.caption("Pega la transcripción de una reunión y recibe una estimación.")
+ESTIMATE_URL = f"{settings.estimator_api_base_url.rstrip('/')}/api/v1/estimate"
 
+PROJECT_TYPE_LABELS = {
+    ProjectType.MOBILE_APP: "App móvil",
+    ProjectType.WEB_SAAS: "Web / SaaS",
+    ProjectType.INTERNAL_TOOL: "Herramienta interna",
+    ProjectType.DATA_PIPELINE: "Pipeline de datos",
+}
+DETAIL_LEVEL_LABELS = {
+    DetailLevel.SUMMARY: "Resumen",
+    DetailLevel.MEDIUM: "Medio",
+    DetailLevel.DETAILED: "Detallado",
+}
+OUTPUT_FORMAT_LABELS = {
+    OutputFormat.PHASES_TABLE: "Tabla por fases",
+    OutputFormat.LINE_ITEMS: "Lista de tareas",
+    OutputFormat.NARRATIVE: "Texto narrativo",
+}
 
-# --- API key: .env (vía settings) o .streamlit/secrets.toml; nunca en el código ---
-def get_api_key() -> str:
-    if settings.openai_api_key:
-        return settings.openai_api_key
-    try:
-        return st.secrets["OPENAI_API_KEY"]
-    except Exception:
-        return ""
+st.set_page_config(page_title="Estimador de software", page_icon="🧮")
 
+st.markdown(
+    """
+    <style>
+        .block-container,
+        [data-testid="stMainBlockContainer"] {
+            padding-top: 2rem;
+        }
+        h1 {
+            padding-top: 0;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-api_key = get_api_key()
-if not api_key:
-    st.error("Falta OPENAI_API_KEY. Defínela en el archivo .env o en .streamlit/secrets.toml.")
-    st.stop()
+st.title("🧮 Estimador de software")
+st.caption("Describe el proyecto y elige cómo quieres recibir la estimación.")
 
-client = OpenAI(api_key=api_key)
-MODEL = settings.llm_model
-SYSTEM_PROMPT = build_system_prompt()  # el mismo prompt (con contexto CAG) del endpoint FastAPI
-
-# --- Nivel 1: historial en session_state ---
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "last_metrics" not in st.session_state:
-    st.session_state.last_metrics = None
-
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-
-# --- Nivel 2: streaming token a token ---
-def stream_estimation(messages, metrics):
-    start = time.perf_counter()
-    stream = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-        temperature=0.3,
-        stream=True,
-        stream_options={"include_usage": True},  # el último chunk trae los tokens
+with st.form("estimation_form"):
+    description = st.text_area(
+        "Descripción del proyecto",
+        height=200,
+        max_chars=2000,
+        placeholder="Ej.: App móvil para reservar mesas en restaurantes, con pagos en línea...",
     )
-    for chunk in stream:
-        if chunk.model:
-            metrics["model"] = chunk.model
-        if chunk.usage:
-            metrics["input_tokens"] = chunk.usage.prompt_tokens
-            metrics["output_tokens"] = chunk.usage.completion_tokens
-        if chunk.choices and chunk.choices[0].delta.content:
-            yield chunk.choices[0].delta.content
-    metrics["seconds"] = time.perf_counter() - start
+    project_type = st.selectbox(
+        "Tipo de proyecto", list(ProjectType), format_func=PROJECT_TYPE_LABELS.get
+    )
+    col1, col2 = st.columns(2)
+    detail_level = col1.selectbox(
+        "Nivel de detalle", list(DetailLevel), index=1, format_func=DETAIL_LEVEL_LABELS.get
+    )
+    output_format = col2.selectbox(
+        "Formato de salida", list(OutputFormat), format_func=OUTPUT_FORMAT_LABELS.get
+    )
+    submitted = st.form_submit_button("Estimar")
 
-
-# --- Entrada del usuario ---
-if prompt := st.chat_input("Pega aquí la transcripción de la reunión..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    with st.chat_message("assistant"):
-        metrics = {"model": MODEL}
-        try:
-            response = st.write_stream(stream_estimation(st.session_state.messages, metrics))
-        except Exception as exc:
-            st.error(f"Error llamando al LLM: {exc}")
-            st.session_state.messages.pop()  # evita dejar un mensaje sin respuesta
-            response = None
-
-    if response:
-        st.session_state.messages.append({"role": "assistant", "content": response})
-        st.session_state.last_metrics = metrics
-
-# --- Nivel 3: panel lateral (va al final para mostrar las métricas de esta misma ejecución) ---
-with st.sidebar:
-    st.header("Contexto CAG")
-
-    st.subheader("System prompt activo")
-    st.text_area("system_prompt", SYSTEM_PROMPT, height=250, disabled=True, label_visibility="collapsed")
-
-    st.subheader("Contexto estático inyectado")
-    for i, ex in enumerate(ESTIMATION_EXAMPLES, start=1):
-        with st.expander(f"Ejemplo {i}"):
-            st.markdown(f"**Resumen:** {ex['meeting_summary']}")
-            st.markdown(ex["estimation"])
-
-    st.subheader("Última llamada")
-    m = st.session_state.last_metrics
-    if m:
-        st.markdown(f"**Modelo:** `{m.get('model', MODEL)}`")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Tokens in", m.get("input_tokens", "-"))
-        col2.metric("Tokens out", m.get("output_tokens", "-"))
-        col3.metric("Segundos", f"{m.get('seconds', 0):.1f}")
+if submitted:
+    try:
+        request = EstimationRequest(
+            description=description.strip(),
+            project_type=project_type,
+            detail_level=detail_level,
+            output_format=output_format,
+        )
+    except ValidationError:
+        st.error("La descripción debe tener entre 20 y 2000 caracteres.")
     else:
-        st.caption("Aún no hay llamadas.")
+        try:
+            with st.spinner("Generando estimación..."):
+                response = httpx.post(
+                    ESTIMATE_URL, json=request.model_dump(mode="json"), timeout=120
+                )
+            response.raise_for_status()
+            st.session_state.result = EstimationResponse.model_validate(response.json())
+        except httpx.HTTPStatusError as exc:
+            st.error(f"El servicio respondió {exc.response.status_code}: {exc.response.text}")
+        except httpx.HTTPError as exc:
+            st.error(
+                f"No se pudo contactar con el servicio en {ESTIMATE_URL}. "
+                f"¿Está corriendo uvicorn? ({exc})"
+            )
 
-    if st.button("Nueva conversación"):
-        st.session_state.messages = []
-        st.session_state.last_metrics = None
-        st.rerun()
+result = st.session_state.get("result")
+if result:
+    st.divider()
+    st.subheader("Estimación")
+    st.caption(f"Versión del prompt: {result.prompt_version}")
+    st.markdown(result.text)
