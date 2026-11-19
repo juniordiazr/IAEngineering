@@ -12,5 +12,8 @@ class Settings(BaseSettings):
     log_level: str = "DEBUG"
     estimator_api_base_url: str = "http://localhost:8000"
 
+    # Ventana deslizante del historial conversacional (turnos = pares user+assistant)
+    session_max_turns: int = 6
+
 
 settings = Settings()
