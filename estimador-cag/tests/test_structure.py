@@ -12,6 +12,7 @@ REQUIRED = [
     "app/prompts/estimation/v1/examples.j2",
     ".env.example", ".gitignore", "pyproject.toml", "README.md",
     "streamlit_app.py",
+    "app/sessions.py",
 ]
 
 
