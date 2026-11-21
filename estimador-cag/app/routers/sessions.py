@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from app.dependencies import get_session_store
 from app.prompts.session_loader import render_session_prompt
+from app.schemas import EstimationResponse
 from app.services.attachments import (
     MAX_FILE_BYTES,
     AttachmentError,
@@ -27,10 +28,8 @@ class SessionCreated(BaseModel):
     session_id: str
 
 
-class SessionEstimateResponse(BaseModel):
+class SessionEstimateResponse(EstimationResponse):
     session_id: str
-    text: str
-    prompt_version: str
     turns: int
     project_metadata: ProjectMetadata
 
