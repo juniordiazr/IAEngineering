@@ -12,6 +12,7 @@ from app.services.attachments import (
     safe_filename,
 )
 from app.services.llm_service import generate_chat
+from app.services.metadata_extractor import extract_metadata
 from app.sessions import ProjectMetadata, SessionNotFoundError, SessionStore
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,11 @@ async def estimate_in_session(
         raise HTTPException(502, "No se pudo generar la estimación.") from None
 
     session.add_turn(_history_entry(transcript, files), reply)
+    session.update_metadata(
+        await extract_metadata(
+            session.project_metadata, transcript, reply, attachments_text
+        )
+    )
     return SessionEstimateResponse(
         session_id=session_id,
         text=reply,

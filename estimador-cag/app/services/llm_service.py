@@ -43,3 +43,15 @@ async def generate_chat(messages: list[dict[str, str]]) -> str:
         temperature=0.3,
     )
     return response.choices[0].message.content or ""
+
+
+async def generate_json(messages: list[dict[str, str]]) -> str:
+    """Llamada de salida estructurada: devuelve un objeto JSON como texto."""
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    response = await client.chat.completions.create(
+        model=settings.llm_model,
+        messages=messages,
+        temperature=0,
+        response_format={"type": "json_object"},
+    )
+    return response.choices[0].message.content or "{}"

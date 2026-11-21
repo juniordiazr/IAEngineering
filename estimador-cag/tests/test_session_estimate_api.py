@@ -1,15 +1,26 @@
+import json
+
 import httpx
 import pytest
-from tests.test_attachments import make_pdf
 
 from app.dependencies import get_session_store
 from app.main import app
 from app.routers import sessions as sessions_router
+from app.services import metadata_extractor
 from app.sessions import SessionStore
+from tests.test_attachments import make_pdf
 
 pytestmark = pytest.mark.anyio
 
 PDF_TEXT = "Presupuesto maximo 50000 euros"
+
+
+class ExtractorScript:
+    """Respuestas programadas del extractor (generate_json) y prompts recibidos."""
+
+    def __init__(self):
+        self.replies: list[str] = []
+        self.prompts: list[list[dict]] = []
 
 
 @pytest.fixture
@@ -36,6 +47,21 @@ def fake_llm(monkeypatch):
 
     monkeypatch.setattr(sessions_router, "generate_chat", fake_generate_chat)
     return calls
+
+
+@pytest.fixture(autouse=True)
+def fake_extractor_llm(monkeypatch):
+    """Evita llamadas reales del extractor. Sin respuesta programada, falla."""
+    script = ExtractorScript()
+
+    async def fake_generate_json(messages):
+        script.prompts.append(messages)
+        if not script.replies:
+            raise RuntimeError("sin respuesta programada")
+        return script.replies.pop(0)
+
+    monkeypatch.setattr(metadata_extractor, "generate_json", fake_generate_json)
+    return script
 
 
 @pytest.fixture
@@ -173,3 +199,69 @@ async def test_eight_turns_never_exceed_max_turns(client, fake_llm, store):
     assert all(len(messages) <= limit for messages in fake_llm)
     assert len(fake_llm[-1]) == limit
     assert store.get(sid).history.turns == 6
+
+
+async def test_two_requests_update_project_metadata(
+    client, fake_llm, fake_extractor_llm
+):
+    fake_extractor_llm.replies.extend(
+        [
+            json.dumps(
+                {"project_name": "BookFlow", "mentioned_technologies": ["Rails"]}
+            ),
+            json.dumps(
+                {
+                    "project_name": "BookFlow",
+                    "mentioned_technologies": ["Rails"],
+                    "assumed_team_size": 4,
+                }
+            ),
+        ]
+    )
+    sid = await new_session(client)
+
+    first = await client.post(
+        estimate_url(sid), data={"transcript": "Proyecto BookFlow con Rails"}
+    )
+    assert first.json()["project_metadata"]["project_name"] == "BookFlow"
+
+    second = await client.post(
+        estimate_url(sid), data={"transcript": "Somos 4 personas"}
+    )
+    metadata = second.json()["project_metadata"]
+    assert metadata["project_name"] == "BookFlow"
+    assert metadata["assumed_team_size"] == 4
+    assert metadata["mentioned_technologies"] == ["Rails"]
+
+    # La metadata del turno 1 llega al system prompt del turno 2, no al del turno 1.
+    assert "<project_metadata>" not in fake_llm[0][0]["content"]
+    system_turn_2 = fake_llm[1][0]["content"]
+    assert "<project_metadata>" in system_turn_2
+    assert "BookFlow" in system_turn_2
+
+
+async def test_extractor_failure_keeps_previous_metadata(
+    client, fake_llm, fake_extractor_llm
+):
+    fake_extractor_llm.replies.append(json.dumps({"project_name": "BookFlow"}))
+    sid = await new_session(client)
+    await client.post(estimate_url(sid), data={"transcript": "Proyecto BookFlow"})
+
+    # Segundo turno: no hay respuesta programada, el extractor falla.
+    second = await client.post(estimate_url(sid), data={"transcript": "gracias"})
+    assert second.status_code == 200
+    assert second.json()["project_metadata"]["project_name"] == "BookFlow"
+
+
+async def test_attachment_text_reaches_the_extractor(
+    client, fake_llm, fake_extractor_llm
+):
+    fake_extractor_llm.replies.append("{}")
+    sid = await new_session(client)
+    await client.post(
+        estimate_url(sid),
+        data={"transcript": "Estima esto"},
+        files=pdf_upload(),
+    )
+    extractor_user_message = fake_extractor_llm.prompts[0][1]["content"]
+    assert PDF_TEXT in extractor_user_message
