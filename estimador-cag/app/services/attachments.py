@@ -26,7 +26,7 @@ class AttachmentError(ValueError):
     """Adjunto inválido: tipo no soportado, demasiado grande o ilegible."""
 
 
-def _safe_name(filename: str) -> str:
+def safe_filename(filename: str) -> str:
     """Solo el nombre base, sin saltos de línea (el nombre también es input del usuario)."""
     name = PurePosixPath((filename or "").replace("\\", "/")).name
     return re.sub(r"[\x00-\x1f]", " ", name).strip() or "sin-nombre"
@@ -49,20 +49,26 @@ def _extract_docx(content: bytes) -> str:
 def extract_text(
     filename: str, content: bytes, max_chars: int = MAX_CHARS_PER_FILE
 ) -> str:
-    name = _safe_name(filename)
+    name = safe_filename(filename)
     extension = PurePosixPath(name.lower()).suffix
     if extension not in SUPPORTED_EXTENSIONS:
         raise AttachmentError(
-            f"'{name}': tipo no soportado (solo .pdf y .docx; un .doc antiguo hay que guardarlo como .docx)"
+            f"'{name}': tipo no soportado (solo .pdf y .docx; "
+            "un .doc antiguo hay que guardarlo como .docx)"
         )
     if len(content) > MAX_FILE_BYTES:
         raise AttachmentError(
             f"'{name}': supera el máximo de {MAX_FILE_BYTES // (1024 * 1024)} MB"
         )
     try:
-        text = _extract_pdf(content) if extension == ".pdf" else _extract_docx(content)
+        if extension == ".pdf":
+            text = _extract_pdf(content)
+        else:
+            text = _extract_docx(content)
     except Exception as exc:  # archivo corrupto: cada librería lanza errores distintos
-        raise AttachmentError(f"'{name}': no se pudo leer el archivo ({exc.__class__.__name__})") from exc
+        raise AttachmentError(
+            f"'{name}': no se pudo leer el archivo ({exc.__class__.__name__})"
+        ) from exc
 
     text = text.strip()
     if not text:
@@ -81,6 +87,6 @@ def build_attachments_text(files: list[tuple[str, bytes]]) -> str:
         raise AttachmentError(f"Máximo {MAX_ATTACHMENTS} adjuntos por petición")
     parts = []
     for filename, content in files:
-        name = _safe_name(filename)
+        name = safe_filename(filename)
         parts.append(f"--- attachment: {name} ---\n{extract_text(name, content)}")
     return "\n\n".join(parts)

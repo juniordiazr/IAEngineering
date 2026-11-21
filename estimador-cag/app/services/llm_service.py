@@ -31,3 +31,15 @@ async def generate_estimation(system_prompt: str, user_prompt: str) -> str:
         response.usage.total_tokens if response.usage else None,
     )
     return text
+
+    
+
+async def generate_chat(messages: list[dict[str, str]]) -> str:
+    """Llama al LLM con un array de mensajes (system + historial + turno nuevo)."""
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    response = await client.chat.completions.create(
+        model=settings.llm_model,
+        messages=messages,
+        temperature=0.3,
+    )
+    return response.choices[0].message.content or ""
