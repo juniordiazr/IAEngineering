@@ -4,7 +4,6 @@ Servicio que genera estimaciones de software a partir de transcripciones de reun
 
 En la sesión 5 se añade **memoria conversacional**: una sesión recuerda el proyecto entre turnos, acepta adjuntos PDF/Word y acumula los datos del proyecto (`project_metadata`), que el cliente Streamlit muestra en un panel. El endpoint transaccional `POST /api/v1/estimate` (sesión 4) se mantiene sin cambios.
 
-![Conversación de 3 turnos con el panel de metadata](docs/conversacion.png)
 
 Los documentos de `docs/` (`spec-nimbus.docx`, `requisitos-nimbus.pdf`) son ficticios, creados solo para la demo.
 
