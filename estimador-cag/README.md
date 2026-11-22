@@ -67,7 +67,7 @@ La redacción exacta del panel puede variar según el modelo. Lo importante es q
 
 ### La captura
 
-Con el historial y el panel visibles, guarda una captura como `docs/conversacion.png` (en Windows, `Win + Shift + S`).
+![Captura de la conversación de 3 turnos con el panel de metadata](docs/conversacion.png)
 
 ### Si algo falla
 
