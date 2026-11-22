@@ -1,125 +1,89 @@
 # Estimador CAG
 
-Servicio que genera estimaciones de software a partir de la descripción de un proyecto, con arquitectura **CAG** (el contexto va inyectado en el prompt en cada llamada, sin base de datos ni retrieval).
+Servicio que genera estimaciones de software a partir de transcripciones de reuniones, con arquitectura **CAG** (el contexto va inyectado en el prompt, sin base de datos ni retrieval).
 
-El cliente es un **formulario** (Streamlit) que produce parámetros tipados. El servicio (FastAPI) construye el prompt a partir de **templates Jinja2 versionados** y llama al LLM con mensajes `system` y `user` separados.
+En la sesión 5 se añade **memoria conversacional**: una sesión recuerda el proyecto entre turnos, acepta adjuntos PDF/Word y acumula los datos del proyecto (`project_metadata`), que el cliente Streamlit muestra en un panel. El endpoint transaccional `POST /api/v1/estimate` (sesión 4) se mantiene sin cambios.
 
-## Arquitectura
+![Conversación de 3 turnos con el panel de metadata](docs/conversacion.png)
 
-```
-Formulario Streamlit ──POST /api/v1/estimate──▶ FastAPI ──▶ render_estimation_prompt() ──▶ LLM (OpenAI)
-   (EstimationRequest)                           (router)     templates .j2 versionados
-```
+Los documentos de `docs/` (`spec-nimbus.docx`, `requisitos-nimbus.pdf`) son ficticios, creados solo para la demo.
 
-- **Formulario tipado:** el espacio de tareas es acotado (tipo de proyecto, nivel de detalle, formato de salida), así que se usan `Enum` en lugar de un textarea libre.
-- **Prompts fuera del código:** viven en `app/prompts/estimation/<versión>/` y se renderizan con Jinja2 (`StrictUndefined`, `trim_blocks`, `lstrip_blocks`).
-- **Versionado:** cada versión del prompt es una carpeta (`v1/`, `v2/`...). La respuesta incluye `prompt_version` para saber qué prompt generó cada texto.
+## Cómo se levanta
 
-## Requisitos
-
-- Python 3.11 o superior
-- [uv](https://docs.astral.sh/uv/)
-- API key de OpenAI con créditos
-
-## Puesta en marcha
-
-Todos los comandos se ejecutan desde la carpeta `estimador-cag`.
+Requisitos: Python 3.11+, [uv](https://docs.astral.sh/uv/) y una API key de OpenAI. Desde la carpeta `estimador-cag`:
 
 ```powershell
 uv sync
-Copy-Item .env.example .env
+Copy-Item .env.example .env      # en Git Bash: cp .env.example .env
 # Edita .env y completa OPENAI_API_KEY
 ```
 
-### Variables de entorno
+Se necesitan dos terminales:
 
-| Variable | Descripción | Valor por defecto |
+```powershell
+uv run uvicorn app.main:app --reload      # API: http://localhost:8000 (Swagger en /docs)
+uv run streamlit run streamlit_app.py     # cliente: http://localhost:8501
+```
+
+| Variable | Descripción | Por defecto |
 |---|---|---|
 | `OPENAI_API_KEY` | API key de OpenAI | (obligatoria) |
-| `ANTHROPIC_API_KEY` | Reservada para un proveedor futuro | vacía |
-| `LLM_PROVIDER` | Proveedor del LLM (hoy solo `openai`) | `openai` |
-| `LLM_MODEL` | Modelo a utilizar | `gpt-4o-mini` |
-| `APP_ENV` | Entorno de ejecución | `development` |
-| `LOG_LEVEL` | Nivel de logging | `DEBUG` |
-| `ESTIMATOR_API_BASE_URL` | URL del servicio, usada por el formulario | `http://localhost:8000` |
+| `LLM_MODEL` | Modelo de la estimación y del extractor de metadata | `gpt-4o-mini` |
+| `SESSION_MAX_TURNS` | Turnos (pares user+assistant) que conserva la ventana deslizante | `6` |
+| `ESTIMATOR_API_BASE_URL` | URL de la API, usada por Streamlit | `http://localhost:8000` |
 
-## Ejecutar
+El cliente crea una sesión al cargar la página (`session_id` en `st.session_state`), permite enviar texto y varios archivos por turno, muestra el `project_metadata` en el panel lateral y tiene el botón **Nueva conversación**, que vuelve a llamar a `POST /sessions`.
 
-Se necesitan **dos terminales**, ambas en `estimador-cag`.
+## Probar una conversación de 3 turnos
 
-**Terminal 1: servicio (FastAPI)**
+Con la API y Streamlit levantados, escribe cada mensaje en el cuadro de texto, adjunta el archivo con el selector si corresponde, pulsa **Enviar** y espera unos segundos: cada turno hace dos llamadas al LLM.
 
-```powershell
-uv run uvicorn app.main:app --reload
-```
+### Los 3 turnos
 
-- Swagger: http://localhost:8000/docs
-- Health: http://localhost:8000/health
+| Turno | Mensaje | Adjuntos |
+|---|---|---|
+| 1 | Queremos estimar un CRM llamado Nimbus en React + Postgres para el equipo de ventas. Somos 4 personas. | `docs/spec-nimbus.docx` |
+| 2 | Añade un módulo de facturación con Stripe. Los requisitos de integración están en el PDF adjunto. | `docs/requisitos-nimbus.pdf` |
+| 3 | Ahora somos 6 personas y el plazo máximo son 3 meses. Descartemos microservicios. ¿Cómo cambia la estimación? | ninguno |
 
-**Terminal 2: formulario (Streamlit)**
+En el selector de archivos, navega hasta la carpeta `docs` del proyecto.
 
-```powershell
-uv run streamlit run streamlit_app.py
-```
+### Qué debe verse tras cada turno
 
-Abre http://localhost:8501, describe el proyecto, elige tipo, nivel de detalle y formato de salida, y pulsa **Estimar**.
+| Turno | Panel lateral | Respuesta |
+|---|---|---|
+| 1 | Proyecto Nimbus, Equipo 4, Tecnologías React y Postgres. Puede añadir la fase 1 o el plazo del documento | Estimación del CRM |
+| 2 | Lo anterior, más Stripe y SAP en tecnologías, y RGPD y SSO en restricciones | Incluye la facturación y la integración con SAP |
+| 3 | Equipo 6, plazo máximo de 3 meses en restricciones, microservicios en descartadas | Sigue hablando de Nimbus, React, Postgres y Stripe sin que se repita, y no propone microservicios |
 
-## Vista previa
+![Ilustración del flujo esperado de una conversación de 3 turnos](docs/flujo.png)
 
-![Formulario del estimador](docs/formulario.png)
+La redacción exacta del panel puede variar según el modelo. Lo importante es que los datos se acumulen, que el equipo cambie a 6 y que lo anterior no desaparezca.
+
+### Comprobaciones finales
+
+- **Historial:** bajo los mensajes de los turnos 1 y 2 aparece "Adjuntos: nombre del archivo".
+- **Coherencia:** en el turno 3 no se repitió el nombre del proyecto y la respuesta aun así lo usa.
+- **Nueva conversación:** el botón vacía el historial y el panel.
+
+### La captura
+
+Con el historial y el panel visibles, guarda una captura como `docs/conversacion.png` (en Windows, `Win + Shift + S`).
+
+### Si algo falla
+
+| Síntoma | Qué mirar |
+|---|---|
+| Error "No se pudo crear la sesión" | La API no está levantada (terminal de uvicorn) |
+| Error 502 | Clave de OpenAI o créditos; el detalle sale en la terminal de uvicorn |
+| Error 422 con adjunto | Archivo que no es `.pdf`/`.docx`, o escaneado/corrupto; el mensaje lo indica |
+| Panel vacío tras el turno 1 | Busca en la terminal de uvicorn el aviso "No se pudo actualizar la metadata" |
+| "La sesión ya no existe" | Se reinició uvicorn: pulsa "Nueva conversación" |
 
 ## API
 
-### `POST /api/v1/estimate`
-
-Request:
-
-```json
-{
-  "description": "App móvil para reservar mesas en restaurantes, con pagos en línea.",
-  "project_type": "mobile_app",
-  "detail_level": "medium",
-  "output_format": "phases_table"
-}
-```
-
-| Campo | Valores |
-|---|---|
-| `description` | Texto de 20 a 2000 caracteres |
-| `project_type` | `mobile_app`, `web_saas`, `internal_tool`, `data_pipeline` |
-| `detail_level` | `summary`, `medium`, `detailed` |
-| `output_format` | `phases_table`, `line_items`, `narrative` |
-
-Response:
-
-```json
-{
-  "text": "## Estimación ...",
-  "prompt_version": "v1"
-}
-```
-
-Prueba rápida con `curl.exe` (guarda el JSON anterior en `body.json`):
-
-```powershell
-curl.exe -X POST http://localhost:8000/api/v1/estimate -H "Content-Type: application/json" --data-binary "@body.json"
-```
-
-Un valor inválido en cualquier campo devuelve `422`. Si falla la llamada al LLM (key, créditos, etc.), el servicio devuelve `502` con el detalle.
-
-## Prompts versionados
-
-```
-app/prompts/
-├── loader.py                  # render_estimation_prompt(request, version="v1") -> (system, user)
-└── estimation/
-    └── v1/
-        ├── system.j2          # rol, instrucciones, bloques por output_format y detail_level
-        ├── user.j2            # envuelve la descripción en <project_description>
-        └── examples.j2        # ejemplos few-shot (incluido desde system.j2)
-```
-
-Para crear una nueva versión, copia `v1/` como `v2/`, modifica los templates y llama al loader con `version="v2"`. El loader solo acepta nombres con el formato `v<número>`.
+- `POST /api/v1/sessions` → `{"session_id": "<uuid4>"}`
+- `POST /api/v1/sessions/{session_id}/estimate` — `multipart/form-data` con `transcript` (texto) y `attachments` (0..n `.pdf`/`.docx`). Devuelve `text`, `prompt_version`, `session_id`, `turns` y `project_metadata`. Errores: `404` sesión inexistente, `422` adjunto inválido o texto vacío, `502` fallo del LLM.
 
 ## Tests
 
@@ -127,26 +91,48 @@ Para crear una nueva versión, copia `v1/` como `v2/`, modifica los templates y 
 uv run pytest -v
 ```
 
-- `tests/prompts/test_estimation_v1.py`: tests de los templates (contenido de la descripción, bloques condicionales por formato y nivel de detalle, versiones inválidas). Corren en milisegundos y **no llaman a ninguna API**. Verifican el template, no la calidad de la respuesta del modelo.
-- `tests/test_api.py`: endpoint con el LLM simulado, validación del body.
-- `tests/test_structure.py`: estructura de archivos del proyecto.
+Son offline: el LLM se sustituye por funciones falsas, sin gastar tokens. Los tres de integración del ejercicio usan `pytest` y `httpx.AsyncClient` (`tests/test_session_estimate_api.py`):
 
-## Estructura del proyecto
+- `test_two_requests_update_project_metadata`: dos peticiones en la misma sesión actualizan la metadata y esta llega al system prompt del segundo turno.
+- `test_pdf_attachment_content_reaches_the_prompt`: el texto de un PDF llega al prompt enviado al LLM.
+- `test_eight_turns_never_exceed_max_turns`: con 8 turnos, el array enviado al LLM nunca supera `1 + 2·MAX_TURNS + 1` mensajes.
+
+## Camino de adjuntos: B (extracción local)
+
+El texto se extrae en el propio servicio con `pypdf` y `python-docx`, y se concatena al mensaje con separadores `--- attachment: nombre.pdf ---`, dentro de un bloque `<attachments>`. Elegí B y no subir el binario a la Files API (camino A) porque:
+
+- no acopla el servicio a un proveedor con soporte de archivos: al modelo solo le llega texto;
+- controla el coste: máximo 5 archivos por turno, 5 MB por archivo y 20 000 caracteres extraídos por archivo;
+- permite defenderse del contenido: el adjunto es input del usuario, no instrucciones. El system prompt lo declara como datos y se sanean el nombre del archivo y las etiquetas de cierre.
+
+Solo se admiten `.pdf` y `.docx`; un PDF escaneado (sin texto) no se lee. En el historial solo se guardan los **nombres** de los adjuntos: su texto viaja únicamente en el turno en que se suben, y los hechos relevantes los conserva el `project_metadata`.
+
+## Cómo se extrae el `project_metadata`
+
+`ProjectMetadata` vive aparte del historial y sobrevive al truncado de la ventana. Tiene seis campos: `project_name`, `assumed_team_size`, `mentioned_technologies`, `agreed_scope`, `explicit_constraints` y `rejected_options`. Se inyecta en el system prompt (plantilla v2) como bloque `<project_metadata>`, que se omite si está vacío.
+
+Tras cada respuesta, una **segunda llamada al LLM** (`app/services/metadata_extractor.py`) recibe la ficha actual, el mensaje del usuario, los adjuntos y la respuesta del asistente, y devuelve la ficha completa actualizada en JSON. Se valida con Pydantic y se sanea (sin `<` ni `>`, longitudes y listas acotadas). Si algo falla, se conserva la metadata anterior y la conversación continúa.
+
+Elegí un extractor con LLM y no una heurística porque los datos llegan en lenguaje natural ("somos cuatro", "mejor sin microservicios") y hay correcciones que las expresiones regulares no manejan bien. El coste es una llamada extra por turno. Como la metadata sale de texto del usuario y se reinyecta en el system prompt, el saneado evita una inyección persistente.
+
+## Límites
+
+- Las sesiones viven en un `dict` en memoria: se pierden al reiniciar el servidor. Es una decisión consciente para esta fase.
+- La ventana deslizante descarta siempre pares completos (user+assistant); el system prompt se regenera en cada turno.
+
+## Estructura
 
 ```
 estimador-cag/
 ├── app/
-│   ├── main.py                # aplicación FastAPI y /health
-│   ├── config.py              # configuración con pydantic-settings
-│   ├── schemas.py             # enums y modelos Pydantic (request/response)
-│   ├── routers/
-│   │   └── estimations.py     # POST /api/v1/estimate
-│   ├── services/
-│   │   └── llm_service.py     # llamada al LLM (system y user separados)
-│   └── prompts/               # loader y templates Jinja2 versionados
+│   ├── main.py, config.py, schemas.py
+│   ├── sessions.py            # historial con ventana, ProjectMetadata, SessionStore
+│   ├── dependencies.py        # almacén de sesiones compartido
+│   ├── routers/               # estimations.py (sesión 4), sessions.py (sesión 5)
+│   ├── services/              # llm_service.py, attachments.py, metadata_extractor.py
+│   └── prompts/               # loaders y templates Jinja2 (v1 transaccional, v2 conversacional)
 ├── tests/
-├── streamlit_app.py           # formulario
-├── .env.example
-├── pyproject.toml
+├── docs/
+├── streamlit_app.py           # cliente conversacional
 └── README.md
 ```
